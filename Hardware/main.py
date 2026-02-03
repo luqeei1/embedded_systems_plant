@@ -15,7 +15,7 @@ DRY_VALUE = 21580
 WET_VALUE = 10000
 ADC_ADDR = 0x48
 
-FASTAPI_URL = "http://172.20.10.13:8000/sensor-data" 
+FASTAPI_URL = "http://54.174.103.93:8000/sensor-data" 
 DEVICE_ID = "Eden_Biome_Monitor_01"
 
 def send_to_fastapi(payload):
@@ -148,6 +148,8 @@ try:
                 "red_blue_ratio": rb_ratio
             }
         }
+
+        send_to_fastapi(sensor_payload)
         
         print("\n" + "="*40)
         print(f"CLIMATE | Temp: {temp_c}°C | Hum: {hum_rh}% | VPD: {vpd} kPa")
