@@ -1,6 +1,7 @@
 import time
 import smbus2
 import struct
+import requests
 import math
 
 # --- 1. I2C / Sensor Setup ---
@@ -13,6 +14,21 @@ irradiance = 0
 DRY_VALUE = 21580 
 WET_VALUE = 10000
 ADC_ADDR = 0x48
+
+FASTAPI_URL = "http://172.20.10.13:8000/sensor-data" 
+DEVICE_ID = "Eden_Biome_Monitor_01"
+
+def send_to_fastapi(payload):
+    try:
+        # We use a timeout so the script doesn't hang if the server is down
+        response = requests.post(FASTAPI_URL, json=payload, timeout=2)
+        if response.status_code == 200:
+            print(f"HTTP SUCCESS: Data sent to {FASTAPI_URL}")
+        else:
+            print(f"HTTP ERROR: Server returned {response.status_code}")
+    except requests.exceptions.RequestException as e:
+        print(f"HTTP FAILED: {e}")
+
 
 def get_si7021_data(command):
     cmd_msg = smbus2.i2c_msg.write(si7021_ADD, [command])
@@ -115,6 +131,24 @@ try:
         # Calculate Red:Blue ratio for morphogenesis tracking
         rb_ratio = round((o + r) / (v + b), 2) if (v + b) > 0 else 0
 
+        sensor_payload = {
+            "device_id": DEVICE_ID,
+            "timestamp": time.time(),
+            "climate": {
+                "temperature": temp_c,
+                "humidity": hum_rh,
+                "vpd": vpd
+            },
+            "soil": {
+                "moisture": soil_pct
+            },
+            "light": {
+                "ppfd": ppfd,
+                "quality_index": efficiency,
+                "red_blue_ratio": rb_ratio
+            }
+        }
+        
         print("\n" + "="*40)
         print(f"CLIMATE | Temp: {temp_c}°C | Hum: {hum_rh}% | VPD: {vpd} kPa")
         print(f"SOIL    | Moisture: {soil_pct}%")
