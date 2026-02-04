@@ -9,13 +9,27 @@ import * as Haptics from 'expo-haptics';
 import { CameraView, useCameraPermissions, FlashMode } from 'expo-camera';
 import { StatusBar } from 'expo-status-bar';
 import { createClient } from '@supabase/supabase-js';
+import useSensorData from '@/hooks/use-sensor-data';
 
 // --- SUPABASE CONFIG ---
 const supabaseUrl = 'https://xjufkkzlppxvxbkgsqye.supabase.co';
 const supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhqdWZra3pscHB4dnhia2dzcXllIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzAwNDQ5NTIsImV4cCI6MjA4NTYyMDk1Mn0.tclAzVQhrjKJl3B9yqDzqjNjak55OQBTg9JfF-eH32k';
 const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
-const metrics = [
+type Metric = {
+  id: string;
+  label: string;
+  value: number;
+  unit: string;
+  colorA: string;
+  colorB: string;
+  icon: string;
+  min: number;
+  max: number;
+  status?: 'good' | 'warning' | 'critical';
+};
+
+const metrics: Metric[] = [
   { id: 'moisture', label: 'Soil Moisture', value: 62, unit: '%', colorA: '#3DDC84', colorB: '#1B8F6B', icon: 'water', min: 40, max: 80, status: 'good' },
   { id: 'light', label: 'Light Intensity', value: 7200, unit: 'lux', colorA: '#FFF176', colorB: '#F9A825', icon: 'sun', min: 5000, max: 10000, status: 'good' },
   { id: 'temperature', label: 'Temperature', value: 23.4, unit: '°C', colorA: '#FF8A65', colorB: '#D84315', icon: 'thermometer', min: 18, max: 28, status: 'good' },
@@ -37,6 +51,19 @@ export default function HomeScreen() {
   
   const [permission, requestPermission] = useCameraPermissions();
   const cameraRef = useRef<CameraView>(null);
+
+  const { data: sensorData, connected } = useSensorData();
+
+  const liveMetrics = metrics.map((m) => {
+    let value = m.value
+    if (sensorData) {
+      if (m.id === 'moisture') value = sensorData.soil.moisture
+      if (m.id === 'temperature') value = sensorData.climate.temperature
+      if (m.id === 'humidity') value = sensorData.climate.humidity
+      if (m.id === 'light') value = sensorData.light.ppfd
+    }
+    return { ...m, value }
+  })
 
   const handleCameraPress = async () => {
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -112,15 +139,21 @@ export default function HomeScreen() {
       <Animated.View entering={FadeInDown.delay(100).duration(500)}>
         <View style={styles.headerSection}>
           <ThemedText type="title" style={styles.header}>Plant Health</ThemedText>
-          <View style={styles.statusBadge}>
-            <MaterialCommunityIcons name="leaf" size={16} color="#10B981" />
-            <ThemedText style={styles.statusText}>Mostly Healthy</ThemedText>
+          <View style={styles.statusRow}>
+            <View style={styles.statusBadge}>
+              <MaterialCommunityIcons name="leaf" size={16} color="#10B981" />
+              <ThemedText style={styles.statusText}>Mostly Healthy</ThemedText>
+            </View>
+            <View style={styles.connectionInfo}>
+              <ThemedText style={styles.connectionText}>{connected ? 'Live' : 'Disconnected'}</ThemedText>
+              <ThemedText style={styles.timestampText}>{sensorData ? new Date(sensorData.timestamp * 1000).toLocaleTimeString() : '—'}</ThemedText>
+            </View>
           </View>
         </View>
       </Animated.View>
 
       <FlatList
-        data={metrics}
+        data={liveMetrics}
         keyExtractor={(item) => item.id}
         renderItem={({ item, index }) => (
           <Animated.View entering={FadeInUp.delay(index * 80).duration(500)}>
@@ -247,4 +280,8 @@ const styles = StyleSheet.create({
   doneBtn: { backgroundColor: '#8B5CF6', paddingHorizontal: 24, paddingVertical: 14, borderRadius: 30 },
   buttonText: { color: 'white', fontWeight: '600', fontSize: 16 },
   row: { flexDirection: 'row', alignItems: 'center', gap: 8 }
+  ,statusRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
+  connectionInfo: { alignItems: 'flex-end' },
+  connectionText: { fontSize: 12, fontWeight: '700', color: '#6B7280' },
+  timestampText: { fontSize: 12, color: '#9CA3AF' }
 });
