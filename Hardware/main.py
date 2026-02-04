@@ -128,8 +128,7 @@ try:
         ppfd = round(raw_sum * 0.046, 1)
         efficiency = round(weighted_sum / raw_sum, 3) if raw_sum > 0 else 0
         
-        # Calculate Red:Blue ratio for morphogenesis tracking
-        rb_ratio = round((o + r) / (v + b), 2) if (v + b) > 0 else 0
+        rb_ratio = round((o + r) / (v + b + 0.001), 2)
 
         sensor_payload = {
             "device_id": DEVICE_ID,
