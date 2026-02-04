@@ -107,8 +107,8 @@ try:
         soil_pct = get_soil_moisture()
 
         # B. Convert to real units
-        temp_c = ((175.72 * raw_temp) / 65536) - 46.85
-        hum_rh = ((125 * raw_hum) / 65536) - 6
+        temp_c = round((((175.72 * raw_temp) / 65536) - 46.85), 1)
+        hum_rh = round((((125 * raw_hum) / 65536) - 6), 1)
 
         vpd = calculate_vpd(temp_c, hum_rh)
 
@@ -125,7 +125,7 @@ try:
         raw_sum = v + b + g + y + o + r
         
         # Calculate Plant Light Intensity (PPFD) and Quality Ratio
-        ppfd = round(raw_sum * 0.046, 2)
+        ppfd = round(raw_sum * 0.046, 1)
         efficiency = round(weighted_sum / raw_sum, 3) if raw_sum > 0 else 0
         
         # Calculate Red:Blue ratio for morphogenesis tracking

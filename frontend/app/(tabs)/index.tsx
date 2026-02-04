@@ -1,4 +1,4 @@
-import { StyleSheet, View, FlatList, Pressable, Modal, TouchableOpacity, Image, ActivityIndicator, Alert } from 'react-native';
+import { StyleSheet, View, Pressable, Modal, TouchableOpacity, Image, ActivityIndicator, Alert, ScrollView, TextInput } from 'react-native';
 import { useState, useRef } from 'react';
 import Animated, { FadeInDown, FadeInUp, FadeIn } from 'react-native-reanimated';
 import { ThemedText } from '@/components/themed-text';
@@ -11,13 +11,16 @@ import { StatusBar } from 'expo-status-bar';
 import { createClient } from '@supabase/supabase-js';
 import useSensorData from '@/hooks/use-sensor-data';
 
-// --- SUPABASE CONFIG ---
+// --- CONFIG ---
 const supabaseUrl = 'https://xjufkkzlppxvxbkgsqye.supabase.co';
 const supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhqdWZra3pscHB4dnhia2dzcXllIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzAwNDQ5NTIsImV4cCI6MjA4NTYyMDk1Mn0.tclAzVQhrjKJl3B9yqDzqjNjak55OQBTg9JfF-eH32k';
 const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
+type MetricCategory = 'climate' | 'soil' | 'light';
+
 type Metric = {
   id: string;
+  category: MetricCategory;
   label: string;
   value: number;
   unit: string;
@@ -26,44 +29,63 @@ type Metric = {
   icon: string;
   min: number;
   max: number;
-  status?: 'good' | 'warning' | 'critical';
 };
 
-const metrics: Metric[] = [
-  { id: 'moisture', label: 'Soil Moisture', value: 62, unit: '%', colorA: '#3DDC84', colorB: '#1B8F6B', icon: 'water', min: 40, max: 80, status: 'good' },
-  { id: 'light', label: 'Light Intensity', value: 7200, unit: 'lux', colorA: '#FFF176', colorB: '#F9A825', icon: 'sun', min: 5000, max: 10000, status: 'good' },
-  { id: 'temperature', label: 'Temperature', value: 23.4, unit: '°C', colorA: '#FF8A65', colorB: '#D84315', icon: 'thermometer', min: 18, max: 28, status: 'good' },
-  { id: 'humidity', label: 'Humidity', value: 48, unit: '%', colorA: '#80DEEA', colorB: '#00ACC1', icon: 'cloud.drizzle', min: 40, max: 70, status: 'warning' },
+const GLOSSARY = [
+  { id: '1', term: 'PPFD', definition: 'Photosynthetic Photon Flux Density. Measures actual light particles reaching the plant.' },
+  { id: '2', term: 'VPD', definition: 'Vapor Pressure Deficit. Measures the atmospheric "thirst" that pulls water through the plant.' },
+  { id: '3', term: 'Quality Index', definition: "Efficiency of the light spectrum at driving photosynthesis (0.0 - 1.0)." },
+  { id: '4', term: 'R:B Ratio', definition: 'Red-to-Blue ratio. Higher Red helps flowering; higher Blue helps vegetative bushiness.' }
 ];
 
-const recommendations = [
-  { id: 1, text: 'Water soil when below 40%', icon: 'water-alert' },
-  { id: 2, text: 'Ensure 6+ hours of sunlight daily', icon: 'sun-clock' },
-  { id: 3, text: 'Humidity is a bit low - consider misting', icon: 'spray-bottle' },
+const metricsConfig: Metric[] = [
+  { id: 'temperature', category: 'climate', label: 'Air Temp', value: 0, unit: '°C', colorA: '#FF8A65', colorB: '#D84315', icon: 'thermometer', min: 18, max: 28 },
+  { id: 'humidity', category: 'climate', label: 'Air Humidity', value: 0, unit: '%', colorA: '#80DEEA', colorB: '#00ACC1', icon: 'cloud-percent', min: 40, max: 75 },
+  { id: 'vpd', category: 'climate', label: 'VPD', value: 0, unit: 'kPa', colorA: '#A78BFA', colorB: '#7C3AED', icon: 'gauge', min: 0.4, max: 1.6 },
+  { id: 'moisture', category: 'soil', label: 'Soil Moisture', value: 0, unit: '%', colorA: '#3DDC84', colorB: '#1B8F6B', icon: 'water', min: 35, max: 80 },
+  { id: 'ppfd', category: 'light', label: 'PPFD', value: 0, unit: 'μmol', colorA: '#FFF176', colorB: '#F9A825', icon: 'sun', min: 100, max: 1200 },
+  { id: 'quality_index', category: 'light', label: 'Quality Index', value: 0, unit: 'eff', colorA: '#F472B6', colorB: '#DB2777', icon: 'leaf-circle', min: 0.7, max: 1.0 },
+  { id: 'red_blue_ratio', category: 'light', label: 'R:B Ratio', value: 0, unit: ':1', colorA: '#60A5FA', colorB: '#2563EB', icon: 'chart-scatter-plot', min: 0.5, max: 2.5 },
 ];
 
 export default function HomeScreen() {
-  const [selectedMetric, setSelectedMetric] = useState<string | null>(null);
+  const [expandedCats, setExpandedCats] = useState<Record<MetricCategory, boolean>>({
+    climate: true, soil: true, light: true
+  });
   const [cameraVisible, setCameraVisible] = useState(false);
   const [flashMode, setFlashMode] = useState<FlashMode>('off');
   const [previewImage, setPreviewImage] = useState<string | null>(null);
+  const [speciesName, setSpeciesName] = useState(''); // New state for input
   const [isUploading, setIsUploading] = useState(false);
   
   const [permission, requestPermission] = useCameraPermissions();
   const cameraRef = useRef<CameraView>(null);
-
   const { data: sensorData, connected } = useSensorData();
 
-  const liveMetrics = metrics.map((m) => {
-    let value = m.value
-    if (sensorData) {
-      if (m.id === 'moisture') value = sensorData.soil.moisture
-      if (m.id === 'temperature') value = sensorData.climate.temperature
-      if (m.id === 'humidity') value = sensorData.climate.humidity
-      if (m.id === 'light') value = sensorData.light.ppfd
-    }
-    return { ...m, value }
-  })
+  const toggleCategory = (cat: MetricCategory) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setExpandedCats(prev => ({ ...prev, [cat]: !prev[cat] }));
+  };
+
+  const getCategorizedMetrics = () => {
+    const categories: Record<MetricCategory, (Metric & { status: string })[]> = {
+      climate: [], soil: [], light: []
+    };
+
+    metricsConfig.forEach(m => {
+      let value = m.value;
+      if (sensorData) {
+        if (m.category === 'climate' && sensorData.climate) value = sensorData.climate[m.id as keyof typeof sensorData.climate] ?? 0;
+        if (m.category === 'soil' && sensorData.soil) value = sensorData.soil.moisture ?? 0;
+        if (m.category === 'light' && sensorData.light) value = sensorData.light[m.id as keyof typeof sensorData.light] ?? 0;
+      }
+      const status = (value < m.min || value > m.max) ? 'warning' : 'good';
+      categories[m.category].push({ ...m, value, status });
+    });
+    return categories;
+  };
+
+  const categorizedData = getCategorizedMetrics();
 
   const handleCameraPress = async () => {
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -72,6 +94,7 @@ export default function HomeScreen() {
       if (!result.granted) return;
     }
     setPreviewImage(null);
+    setSpeciesName(''); // Reset name when opening camera
     setCameraVisible(true);
   };
 
@@ -81,18 +104,21 @@ export default function HomeScreen() {
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         const photo = await cameraRef.current.takePictureAsync({ quality: 0.5 }); 
         if (photo) setPreviewImage(photo.uri);
-      } catch (e) {
-        console.error("Capture Error:", e);
-      }
+      } catch (e) { console.error("Capture Error:", e); }
     }
   };
 
   const uploadAndSavePlant = async () => {
     if (!previewImage) return;
-    
+    if (!speciesName.trim()) {
+      Alert.alert("Wait!", "Please provide a name for this specimen.");
+      return;
+    }
+
     setIsUploading(true);
+
     try {
-      const fileName = `plant_${Date.now()}.jpg`;
+      const fileName = `eden_${Date.now()}.jpg`;
       const formData = new FormData();
       formData.append('file', {
         uri: previewImage,
@@ -100,35 +126,30 @@ export default function HomeScreen() {
         type: 'image/jpeg',
       } as any);
 
+      // 1. Upload to Storage
       const { error: storageError } = await supabase.storage
         .from('plant-photos')
         .upload(fileName, formData);
 
       if (storageError) throw storageError;
 
+      // 2. Get Public URL
       const { data: urlData } = supabase.storage.from('plant-photos').getPublicUrl(fileName);
-      const publicImageUrl = urlData.publicUrl;
 
-      const { error: dbError } = await supabase
-        .from('plant')
-        .insert([{
-          species: 'House Plant', 
-          picture: publicImageUrl,
-          max_temp: 28,
-          min_temp: 18,
-          light: 7200,
-          humidity: 48,
-          soil_humidity: 62,
-        }]);
+      // 3. Insert into public.plant
+      const { error: dbError } = await supabase.from('plant').insert([{
+        species: speciesName.trim(), // Using state variable here
+        picture: urlData.publicUrl,
+      }]);
 
       if (dbError) throw dbError;
 
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      Alert.alert("Saved", "Plant data and photo synced successfully!");
+      Alert.alert("Success", `${speciesName} saved to library.`);
       setCameraVisible(false);
     } catch (error: any) {
       console.error(error);
-      Alert.alert("Upload Failed", error.message || "Could not save to Supabase");
+      Alert.alert("Error", error.message);
     } finally {
       setIsUploading(false);
     }
@@ -136,80 +157,71 @@ export default function HomeScreen() {
 
   return (
     <ThemedView style={styles.container}>
-      <Animated.View entering={FadeInDown.delay(100).duration(500)}>
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
+        {/* Header and Metrics Sections (Same as original) */}
         <View style={styles.headerSection}>
-          <ThemedText type="title" style={styles.header}>Plant Health</ThemedText>
+          <ThemedText type="title" style={styles.header}>Biome Monitor</ThemedText>
           <View style={styles.statusRow}>
             <View style={styles.statusBadge}>
-              <MaterialCommunityIcons name="leaf" size={16} color="#10B981" />
-              <ThemedText style={styles.statusText}>Mostly Healthy</ThemedText>
+              <MaterialCommunityIcons name="shield-check" size={14} color="#10B981" />
+              <ThemedText style={styles.statusText}>Live Precision</ThemedText>
             </View>
-            <View style={styles.connectionInfo}>
-              <ThemedText style={styles.connectionText}>{connected ? 'Live' : 'Disconnected'}</ThemedText>
-              <ThemedText style={styles.timestampText}>{sensorData ? new Date(sensorData.timestamp * 1000).toLocaleTimeString() : '—'}</ThemedText>
-            </View>
+            <ThemedText style={styles.connectionText}>{connected ? '• Connected' : '• Offline'}</ThemedText>
           </View>
         </View>
-      </Animated.View>
 
-      <FlatList
-        data={liveMetrics}
-        keyExtractor={(item) => item.id}
-        renderItem={({ item, index }) => (
-          <Animated.View entering={FadeInUp.delay(index * 80).duration(500)}>
-            <Pressable
-              onPress={() => {
-                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                setSelectedMetric(selectedMetric === item.id ? null : item.id);
-              }}
-              style={styles.cardWrapper}
-            >
-              <MetricCard 
-                label={item.label} 
-                value={item.value} 
-                unit={item.unit} 
-                colorA={item.colorA} 
-                colorB={item.colorB} 
-                icon={item.icon}
-                status={item.status}
+        {(['climate', 'soil', 'light'] as MetricCategory[]).map((cat) => (
+          <View key={cat} style={styles.categoryBlock}>
+            <Pressable onPress={() => toggleCategory(cat)} style={styles.categoryHeader}>
+              <ThemedText style={styles.categoryTitle}>{cat.toUpperCase()}</ThemedText>
+              <MaterialCommunityIcons 
+                name={expandedCats[cat] ? "chevron-down" : "chevron-right"} 
+                size={20} color="#9CA3AF" 
               />
             </Pressable>
-          </Animated.View>
-        )}
-        contentContainerStyle={styles.list}
-        ListFooterComponent={
-            <View style={styles.recommendationSection}>
-                <ThemedText style={styles.recommendationTitle}>Care Tips</ThemedText>
-                {recommendations.map((rec) => (
-                    <View key={rec.id} style={styles.recommendationItem}>
-                        <MaterialCommunityIcons name={rec.icon as any} size={18} color="#8B5CF6" />
-                        <ThemedText style={styles.recommendationText}>{rec.text}</ThemedText>
-                    </View>
+            {expandedCats[cat] && (
+              <Animated.View entering={FadeIn.duration(300)} style={styles.categoryContent}>
+                {categorizedData[cat].map((item) => (
+                  <MetricCard 
+                    key={item.id}
+                    label={item.label} value={item.value} unit={item.unit} 
+                    colorA={item.colorA} colorB={item.colorB} 
+                    icon={item.icon} status={item.status as any}
+                  />
                 ))}
-            </View>
-        }
-      />
+              </Animated.View>
+            )}
+          </View>
+        ))}
 
-      <Animated.View entering={FadeInUp.delay(600).duration(500)} style={styles.fabContainer}>
-        <Pressable onPress={handleCameraPress} style={({ pressed }) => [styles.fab, pressed && styles.fabPressed]}>
+        <View style={styles.glossarySection}>
+            <View style={styles.glossaryHeader}>
+                <MaterialCommunityIcons name="book-open-variant" size={18} color="#6B7280" />
+                <ThemedText style={styles.glossaryTitle}>Scientific Glossary</ThemedText>
+            </View>
+            {GLOSSARY.map((item) => (
+                <View key={item.id} style={styles.glossaryItem}>
+                    <ThemedText style={styles.glossaryTerm}>{item.term}</ThemedText>
+                    <ThemedText style={styles.glossaryDefinition}>{item.definition}</ThemedText>
+                </View>
+            ))}
+        </View>
+      </ScrollView>
+
+      <View style={styles.fabContainer}>
+        <Pressable onPress={handleCameraPress} style={styles.fab}>
           <MaterialCommunityIcons name="camera" size={28} color="white" />
         </Pressable>
-      </Animated.View>
+      </View>
 
       <Modal visible={cameraVisible} animationType="slide" statusBarTranslucent>
-        <View style={styles.cameraContainer}>
+        <ThemedView style={styles.cameraContainer}>
           {!previewImage ? (
             <CameraView style={styles.camera} ref={cameraRef} flash={flashMode} facing="back">
               <View style={styles.cameraTopBar}>
                 <TouchableOpacity style={styles.iconCircle} onPress={() => setCameraVisible(false)}>
                     <MaterialCommunityIcons name="close" size={24} color="white" />
                 </TouchableOpacity>
-                <TouchableOpacity style={styles.iconCircle} onPress={() => setFlashMode(prev => prev === 'off' ? 'on' : 'off')}>
-                  <MaterialCommunityIcons name={flashMode === 'on' ? "flash" : "flash-off"} size={22} color="white" />
-                </TouchableOpacity>
-              </View>
-              <View style={styles.gridOverlay} pointerEvents="none">
-                <View style={styles.frameGuide} />
               </View>
               <View style={styles.cameraBottomBar}>
                 <TouchableOpacity style={styles.shutterOuter} onPress={takePicture}>
@@ -218,10 +230,22 @@ export default function HomeScreen() {
               </View>
             </CameraView>
           ) : (
-            <Animated.View entering={FadeIn} style={styles.previewContainer}>
+            <View style={styles.previewContainer}>
               <Image source={{ uri: previewImage }} style={styles.previewImage} />
+              
+              {/* Updated Overlay with Input */}
               <View style={styles.previewOverlay}>
-                <ThemedText style={styles.previewTitle}>Review Photo</ThemedText>
+                <ThemedText style={styles.previewTitle}>Identify Specimen</ThemedText>
+                
+                <TextInput
+                  style={styles.speciesInput}
+                  placeholder="Enter species name..."
+                  placeholderTextColor="rgba(255,255,255,0.5)"
+                  value={speciesName}
+                  onChangeText={setSpeciesName}
+                  autoFocus
+                />
+
                 <View style={styles.previewActions}>
                   <TouchableOpacity style={styles.retakeBtn} onPress={() => setPreviewImage(null)} disabled={isUploading}>
                     <ThemedText style={styles.buttonText}>Retake</ThemedText>
@@ -230,17 +254,14 @@ export default function HomeScreen() {
                     {isUploading ? (
                       <ActivityIndicator color="white" size="small" />
                     ) : (
-                      <View style={styles.row}>
-                        <MaterialCommunityIcons name="cloud-upload" size={20} color="white" />
-                        <ThemedText style={styles.buttonText}>Save to Cloud</ThemedText>
-                      </View>
+                      <ThemedText style={styles.buttonText}>Upload</ThemedText>
                     )}
                   </TouchableOpacity>
                 </View>
               </View>
-            </Animated.View>
+            </View>
           )}
-        </View>
+        </ThemedView>
         <StatusBar style="light" />
       </Modal>
     </ThemedView>
@@ -248,40 +269,57 @@ export default function HomeScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, paddingHorizontal: 20, paddingTop: 60 },
-  headerSection: { marginBottom: 32, gap: 10 },
-  header: { fontSize: 36, fontWeight: '800' },
-  statusBadge: { flexDirection: 'row', alignItems: 'center', gap: 6, alignSelf: 'flex-start', backgroundColor: 'rgba(16, 185, 129, 0.15)', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 12 },
-  statusText: { fontSize: 12, fontWeight: '600', color: '#10B981' },
-  list: { paddingBottom: 100 },
-  cardWrapper: { marginBottom: 12 },
-  recommendationSection: { backgroundColor: 'rgba(139, 92, 246, 0.1)', borderRadius: 16, padding: 16, marginTop: 20 },
-  recommendationTitle: { fontSize: 16, fontWeight: '700', marginBottom: 12, color: '#8B5CF6' },
-  recommendationItem: { flexDirection: 'row', gap: 12, paddingVertical: 10 },
-  recommendationText: { fontSize: 13 },
-  fabContainer: { position: 'absolute', bottom: 30, right: 20, zIndex: 10 },
-  fab: { backgroundColor: '#8B5CF6', width: 64, height: 64, borderRadius: 32, justifyContent: 'center', alignItems: 'center', elevation: 8 },
-  fabPressed: { transform: [{ scale: 0.9 }] },
+  // Original Monitor Styles
+  container: { flex: 1, backgroundColor: '#F9FAFB' },
+  scrollContent: { paddingHorizontal: 20, paddingTop: 60, paddingBottom: 100 },
+  headerSection: { marginBottom: 30 },
+  header: { fontSize: 32, fontWeight: '800' },
+  statusRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 8 },
+  statusBadge: { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: '#ECFDF5', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8 },
+  statusText: { fontSize: 12, fontWeight: '700', color: '#059669' },
+  connectionText: { fontSize: 12, color: '#9CA3AF', fontWeight: '600' },
+  categoryBlock: { marginBottom: 12, backgroundColor: '#fff', borderRadius: 20, overflow: 'hidden', borderWidth: 1, borderColor: '#F3F4F6' },
+  categoryHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 18 },
+  categoryContent: { paddingHorizontal: 16, paddingBottom: 16 },
+  categoryTitle: { fontSize: 13, fontWeight: '800', color: '#6B7280', letterSpacing: 1 },
+  glossarySection: { marginTop: 20, padding: 20, backgroundColor: '#FFFFFF', borderRadius: 20, borderWidth: 1, borderColor: '#F3F4F6' },
+  glossaryHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 15 },
+  glossaryTitle: { fontSize: 16, fontWeight: '700', color: '#374151' },
+  glossaryItem: { marginBottom: 12 },
+  glossaryTerm: { fontSize: 13, fontWeight: '700', color: '#4B5563' },
+  glossaryDefinition: { fontSize: 12, color: '#6B7280', lineHeight: 17 },
+  fabContainer: { position: 'absolute', bottom: 30, right: 25 },
+  fab: { backgroundColor: '#8B5CF6', width: 60, height: 60, borderRadius: 30, justifyContent: 'center', alignItems: 'center', elevation: 5 },
+  
+  // Camera & Preview Styles
   cameraContainer: { flex: 1, backgroundColor: 'black' },
   camera: { flex: 1 },
-  cameraTopBar: { paddingTop: 60, paddingHorizontal: 20, flexDirection: 'row', justifyContent: 'space-between' },
+  cameraTopBar: { paddingTop: 60, paddingHorizontal: 20 },
   iconCircle: { width: 44, height: 44, borderRadius: 22, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' },
-  gridOverlay: { ...StyleSheet.absoluteFillObject, justifyContent: 'center', alignItems: 'center' },
-  frameGuide: { width: '80%', height: '60%', borderWidth: 2, borderColor: 'rgba(255,255,255,0.25)', borderRadius: 20, borderStyle: 'dashed' },
-  cameraBottomBar: { position: 'absolute', bottom: 40, left: 0, right: 0, flexDirection: 'row', alignItems: 'center', justifyContent: 'center' },
+  cameraBottomBar: { position: 'absolute', bottom: 40, width: '100%', alignItems: 'center' },
   shutterOuter: { width: 72, height: 72, borderRadius: 36, borderWidth: 4, borderColor: 'white', justifyContent: 'center', alignItems: 'center' },
   shutterInner: { width: 54, height: 54, borderRadius: 27, backgroundColor: 'white' },
-  previewContainer: { flex: 1, backgroundColor: 'black' },
+  previewContainer: { flex: 1 },
   previewImage: { flex: 1, resizeMode: 'cover' },
-  previewOverlay: { position: 'absolute', bottom: 0, left: 0, right: 0, padding: 40, backgroundColor: 'rgba(0,0,0,0.6)', alignItems: 'center' },
-  previewTitle: { color: 'white', fontSize: 20, fontWeight: '700', marginBottom: 20 },
+  previewOverlay: { position: 'absolute', bottom: 0, width: '100%', padding: 40, backgroundColor: 'rgba(0,0,0,0.7)', alignItems: 'center' },
+  previewTitle: { color: 'white', fontSize: 20, fontWeight: '700', marginBottom: 15 },
+  
+  // NEW: Input Field Styling
+  speciesInput: {
+    width: '100%',
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    borderRadius: 12,
+    padding: 15,
+    color: 'white',
+    fontSize: 16,
+    fontWeight: '500',
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.2)',
+  },
+
   previewActions: { flexDirection: 'row', gap: 20 },
   retakeBtn: { backgroundColor: 'rgba(255,255,255,0.2)', paddingHorizontal: 24, paddingVertical: 14, borderRadius: 30 },
   doneBtn: { backgroundColor: '#8B5CF6', paddingHorizontal: 24, paddingVertical: 14, borderRadius: 30 },
-  buttonText: { color: 'white', fontWeight: '600', fontSize: 16 },
-  row: { flexDirection: 'row', alignItems: 'center', gap: 8 }
-  ,statusRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
-  connectionInfo: { alignItems: 'flex-end' },
-  connectionText: { fontSize: 12, fontWeight: '700', color: '#6B7280' },
-  timestampText: { fontSize: 12, color: '#9CA3AF' }
+  buttonText: { color: 'white', fontWeight: '600', fontSize: 16 }
 });
