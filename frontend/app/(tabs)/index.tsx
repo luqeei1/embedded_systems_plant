@@ -19,23 +19,7 @@ const supabase = createClient(supabaseUrl, supabaseAnonKey);
 const PLANTNET_API_KEY = "2b10KiKsMUeENafn6MPQolwHO";
 const PLANTNET_API_URL = `https://my-api.plantnet.org/v2/identify/all?api-key=${PLANTNET_API_KEY}`;
 
-// --- PLACEHOLDER KNOWLEDGE BASE ---
-const SPECIES_KNOWLEDGE_BASE: Record<string, any> = {
-  "Neanthe Bella Palm": {
-    temp: { min: 18, max: 25 },
-    hum: { min: 50, max: 70 },
-    vpd: { min: 0.8, max: 1.1 },
-    soil: { min: 45, max: 65 },
-    ppfd: { min: 100, max: 300 }
-  },
-  "Default": {
-    temp: { min: 18, max: 28 },
-    hum: { min: 40, max: 75 },
-    vpd: { min: 0.4, max: 1.6 },
-    soil: { min: 35, max: 80 },
-    ppfd: { min: 100, max: 1200 }
-  }
-};
+const EC2_BASE_URL = "http://54.174.103.93:8000"; 
 
 type MetricCategory = 'climate' | 'soil' | 'light';
 
@@ -72,12 +56,13 @@ export default function HomeScreen() {
   
   const [availableSpecies, setAvailableSpecies] = useState<string[]>([]);
   const [selectedSpecies, setSelectedSpecies] = useState<string | null>(null);
+  const [activeConditions, setActiveConditions] = useState<any>(null); // Data from EC2
 
   const [permission, requestPermission] = useCameraPermissions();
   const cameraRef = useRef<CameraView>(null);
   const { data: sensorData, connected } = useSensorData();
 
-  // --- REUSABLE FETCH FUNCTION ---
+  // 1. Fetch species from Supabase
   const fetchSpeciesList = async () => {
     const { data, error } = await supabase.from('plant').select('species');
     if (!error && data) {
@@ -86,25 +71,46 @@ export default function HomeScreen() {
     }
   };
 
-  useEffect(() => {
-    fetchSpeciesList();
-  }, []);
+  useEffect(() => { fetchSpeciesList(); }, []);
 
+  // 2. Fetch specific conditions from EC2 when species is selected
+  const handleSpeciesSelect = async (item: string) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    setSelectedSpecies(item);
+    setSpeciesModalVisible(false);
+
+    try {
+      const response = await fetch(`${EC2_BASE_URL}/plant-conditions/${encodeURIComponent(item)}`);
+      const data = await response.json();
+      setActiveConditions(data);
+    } catch (error) {
+      console.error("EC2 Fetch Error:", error);
+      Alert.alert("Connection Error", "Could not reach AWS server for scientific data.");
+    }
+  };
+
+  // 3. Dynamic UI Config based on EC2 data
   const dynamicMetricsConfig: Metric[] = useMemo(() => {
-    const lookup = (selectedSpecies && SPECIES_KNOWLEDGE_BASE[selectedSpecies]) 
-      ? SPECIES_KNOWLEDGE_BASE[selectedSpecies] 
-      : SPECIES_KNOWLEDGE_BASE["Default"];
+    const lookup = activeConditions || {
+      temperature: { min: 18, max: 28 },
+      humidity: { min: 40, max: 75 },
+      vpd: { min: 0.4, max: 1.6 },
+      soil_moisture: { min: 35, max: 80 },
+      ppfd: { min: 100, max: 1200 },
+      quality_index: { min: 0.7, max: 1.0 },
+      red_blue_ratio: { min: 0.5, max: 2.5 }
+    };
 
     return [
-      { id: 'temperature', category: 'climate', label: 'Air Temp', value: 0, unit: '°C', colorA: '#FF8A65', colorB: '#D84315', icon: 'thermometer', min: lookup.temp.min, max: lookup.temp.max, idealRange: `${lookup.temp.min}.0 - ${lookup.temp.max}.0` },
-      { id: 'humidity', category: 'climate', label: 'Air Humidity', value: 0, unit: '%', colorA: '#80DEEA', colorB: '#00ACC1', icon: 'cloud-percent', min: lookup.hum.min, max: lookup.hum.max, idealRange: `${lookup.hum.min}.0 - ${lookup.hum.max}.0` },
-      { id: 'vpd', category: 'climate', label: 'VPD', value: 0, unit: 'kPa', colorA: '#A78BFA', colorB: '#7C3AED', icon: 'gauge', min: lookup.vpd.min, max: lookup.vpd.max, idealRange: `${lookup.vpd.min} - ${lookup.vpd.max}` },
-      { id: 'moisture', category: 'soil', label: 'Soil Moisture', value: 0, unit: '%', colorA: '#3DDC84', colorB: '#1B8F6B', icon: 'water', min: lookup.soil.min, max: lookup.soil.max, idealRange: `${lookup.soil.min}.0 - ${lookup.soil.max}.0` },
-      { id: 'ppfd', category: 'light', label: 'PPFD', value: 0, unit: 'μmol', colorA: '#FFF176', colorB: '#F9A825', icon: 'sun', min: lookup.ppfd.min, max: lookup.ppfd.max, idealRange: `${lookup.ppfd.min} - ${lookup.ppfd.max}` },
-      { id: 'quality_index', category: 'light', label: 'Quality Index', value: 0, unit: 'eff', colorA: '#F472B6', colorB: '#DB2777', icon: 'leaf-circle', min: 0.7, max: 1.0, idealRange: '0.70 - 1.00' },
-      { id: 'red_blue_ratio', category: 'light', label: 'R:B Ratio', value: 0, unit: ':1', colorA: '#60A5FA', colorB: '#2563EB', icon: 'chart-scatter-plot', min: 0.5, max: 2.5, idealRange: '0.50 - 2.50' },
+      { id: 'temperature', category: 'climate', label: 'Air Temp', value: 0, unit: '°C', colorA: '#FF8A65', colorB: '#D84315', icon: 'thermometer', ...lookup.temperature, idealRange: `${lookup.temperature.min} - ${lookup.temperature.max}` },
+      { id: 'humidity', category: 'climate', label: 'Air Humidity', value: 0, unit: '%', colorA: '#80DEEA', colorB: '#00ACC1', icon: 'cloud-percent', ...lookup.humidity, idealRange: `${lookup.humidity.min} - ${lookup.humidity.max}` },
+      { id: 'vpd', category: 'climate', label: 'VPD', value: 0, unit: 'kPa', colorA: '#A78BFA', colorB: '#7C3AED', icon: 'gauge', ...lookup.vpd, idealRange: `${lookup.vpd.min} - ${lookup.vpd.max}` },
+      { id: 'moisture', category: 'soil', label: 'Soil Moisture', value: 0, unit: '%', colorA: '#3DDC84', colorB: '#1B8F6B', icon: 'water', min: lookup.soil_moisture.min, max: lookup.soil_moisture.max, idealRange: `${lookup.soil_moisture.min} - ${lookup.soil_moisture.max}` },
+      { id: 'ppfd', category: 'light', label: 'PPFD', value: 0, unit: 'μmol', colorA: '#FFF176', colorB: '#F9A825', icon: 'sun', ...lookup.ppfd, idealRange: `${lookup.ppfd.min} - ${lookup.ppfd.max}` },
+      { id: 'quality_index', category: 'light', label: 'Quality Index', value: 0, unit: 'eff', colorA: '#F472B6', colorB: '#DB2777', icon: 'leaf-circle', ...lookup.quality_index, idealRange: `${lookup.quality_index.min} - ${lookup.quality_index.max}` },
+      { id: 'red_blue_ratio', category: 'light', label: 'R:B Ratio', value: 0, unit: ':1', colorA: '#60A5FA', colorB: '#2563EB', icon: 'chart-scatter-plot', ...lookup.red_blue_ratio, idealRange: `${lookup.red_blue_ratio.min} - ${lookup.red_blue_ratio.max}` },
     ];
-  }, [selectedSpecies]);
+  }, [activeConditions]);
 
   const toggleCategory = (cat: MetricCategory) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -112,9 +118,7 @@ export default function HomeScreen() {
   };
 
   const getCategorizedMetrics = () => {
-    const categories: Record<MetricCategory, (Metric & { status: string })[]> = {
-      climate: [], soil: [], light: []
-    };
+    const categories: Record<MetricCategory, (Metric & { status: string })[]> = { climate: [], soil: [], light: [] };
     dynamicMetricsConfig.forEach(m => {
       let value = m.value;
       if (sensorData) {
@@ -130,16 +134,6 @@ export default function HomeScreen() {
 
   const categorizedData = getCategorizedMetrics();
 
-  const handleCameraPress = async () => {
-    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    if (!permission?.granted) {
-      const result = await requestPermission();
-      if (!result.granted) return;
-    }
-    setPreviewImage(null);
-    setCameraVisible(true);
-  };
-
   const takePicture = async () => {
     if (cameraRef.current) {
       try {
@@ -152,66 +146,37 @@ export default function HomeScreen() {
 
   const identifyPlantAI = async (imageUri: string) => {
     const formData = new FormData();
-    formData.append('images', {
-      uri: imageUri,
-      name: 'id_request.jpg',
-      type: 'image/jpeg',
-    } as any);
-
+    formData.append('images', { uri: imageUri, name: 'id.jpg', type: 'image/jpeg' } as any);
     try {
-      const response = await fetch(PLANTNET_API_URL, {
-        method: 'POST',
-        body: formData,
-        headers: { 'Content-Type': 'multipart/form-data' },
-      });
+      const response = await fetch(PLANTNET_API_URL, { method: 'POST', body: formData, headers: { 'Content-Type': 'multipart/form-data' } });
       const data = await response.json();
-      
       if (data.results && data.results.length > 0) {
-        const bestMatch = data.results[0].species;
-        const scientificName = bestMatch.scientificNameWithoutAuthor;
-        const commonName = (bestMatch.commonNames && bestMatch.commonNames.length > 0) 
-                           ? bestMatch.commonNames[0] 
-                           : null;
-        return commonName ? `${scientificName} (${commonName})` : scientificName;
+        const best = data.results[0].species;
+        const sci = best.scientificNameWithoutAuthor;
+        const common = best.commonNames?.[0];
+        return common ? `${sci} (${common})` : sci;
       }
       return "Unknown Species";
-    } catch (e) {
-      return "Identification Error";
-    }
+    } catch (e) { return "Identification Error"; }
   };
 
   const uploadAndSavePlant = async () => {
     if (!previewImage) return;
     setIsUploading(true);
-
     try {
       const aiFullName = await identifyPlantAI(previewImage);
       const fileName = `eden_${Date.now()}.jpg`;
       const formData = new FormData();
       formData.append('file', { uri: previewImage, name: fileName, type: 'image/jpeg' } as any);
-
-      const { error: storageError } = await supabase.storage.from('plant-photos').upload(fileName, formData);
-      if (storageError) throw storageError;
-
+      await supabase.storage.from('plant-photos').upload(fileName, formData);
       const { data: urlData } = supabase.storage.from('plant-photos').getPublicUrl(fileName);
-      const { error: dbError } = await supabase.from('plant').insert([{
-        species: aiFullName, 
-        picture: urlData.publicUrl,
-      }]);
-
-      if (dbError) throw dbError;
-
-      // --- RE-FETCH THE LIST HERE ---
+      await supabase.from('plant').insert([{ species: aiFullName, picture: urlData.publicUrl }]);
       await fetchSpeciesList();
-
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      Alert.alert("Identification Successful", `Result: ${aiFullName}\nSync Complete.`);
+      Alert.alert("Identification Successful", aiFullName);
       setCameraVisible(false);
-    } catch (error: any) {
-      Alert.alert("Upload Error", error.message);
-    } finally {
-      setIsUploading(false);
-    }
+    } catch (error: any) { Alert.alert("Upload Error", error.message); }
+    finally { setIsUploading(false); }
   };
 
   return (
@@ -227,12 +192,10 @@ export default function HomeScreen() {
             <ThemedText style={styles.connectionText}>{connected ? '• Connected' : '• Offline'}</ThemedText>
           </View>
 
-          <Pressable style={styles.dropdownTrigger} onPress={() => {Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setSpeciesModalVisible(true);}}>
+          <Pressable style={styles.dropdownTrigger} onPress={() => setSpeciesModalVisible(true)}>
              <View style={styles.dropdownInfo}>
                 <ThemedText style={styles.dropdownLabel}>TARGET SPECIMEN</ThemedText>
-                <ThemedText style={styles.dropdownValue} numberOfLines={1}>
-                  {selectedSpecies || "Select Plant Species..."}
-                </ThemedText>
+                <ThemedText style={styles.dropdownValue} numberOfLines={1}>{selectedSpecies || "Select Plant Species..."}</ThemedText>
              </View>
              <MaterialCommunityIcons name="chevron-down" size={22} color="#8B5CF6" />
           </Pressable>
@@ -278,24 +241,13 @@ export default function HomeScreen() {
         </View>
       </ScrollView>
 
-      {/* SPECIES MODAL */}
+      {/* MODAL */}
       <Modal visible={speciesModalVisible} transparent animationType="fade" statusBarTranslucent>
         <View style={styles.modalOverlay}>
           <Animated.View entering={SlideInDown} exiting={SlideOutDown} style={styles.modalContent}>
             <View style={styles.modalHeader}><View style={styles.modalHandle} /><ThemedText style={styles.modalTitle}>Choose Specimen</ThemedText></View>
-            <FlatList 
-              data={availableSpecies} 
-              keyExtractor={(item) => item} 
-              contentContainerStyle={styles.listContainer} 
-              renderItem={({ item }) => (
-                <TouchableOpacity 
-                  style={styles.speciesOption} 
-                  onPress={() => {
-                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                    setSelectedSpecies(item);
-                    setSpeciesModalVisible(false);
-                  }}
-                >
+            <FlatList data={availableSpecies} keyExtractor={(item) => item} contentContainerStyle={styles.listContainer} renderItem={({ item }) => (
+                <TouchableOpacity style={styles.speciesOption} onPress={() => handleSpeciesSelect(item)}>
                   <MaterialCommunityIcons name="leaf" size={20} color="#8B5CF6" style={styles.optionIcon} />
                   <ThemedText style={styles.optionText} numberOfLines={1}>{item}</ThemedText>
                 </TouchableOpacity>
@@ -307,7 +259,7 @@ export default function HomeScreen() {
       </Modal>
 
       <View style={styles.fabContainer}>
-        <Pressable onPress={handleCameraPress} style={styles.fab}><MaterialCommunityIcons name="camera" size={28} color="white" /></Pressable>
+        <Pressable onPress={() => {Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); setCameraVisible(true)}} style={styles.fab}><MaterialCommunityIcons name="camera" size={28} color="white" /></Pressable>
       </View>
 
       <Modal visible={cameraVisible} animationType="slide" statusBarTranslucent>
