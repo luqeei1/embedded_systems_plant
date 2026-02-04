@@ -71,13 +71,22 @@ export default function HomeScreen() {
     const categories: Record<MetricCategory, (Metric & { status: string })[]> = {
       climate: [], soil: [], light: []
     };
-
     metricsConfig.forEach(m => {
       let value = m.value;
       if (sensorData) {
-        if (m.category === 'climate' && sensorData.climate) value = sensorData.climate[m.id as keyof typeof sensorData.climate] ?? 0;
-        if (m.category === 'soil' && sensorData.soil) value = sensorData.soil.moisture ?? 0;
-        if (m.category === 'light' && sensorData.light) value = sensorData.light[m.id as keyof typeof sensorData.light] ?? 0;
+        if (m.category === 'climate' && sensorData.climate) {
+          if (m.id === 'temperature') value = sensorData.climate.temperature ?? 0;
+          else if (m.id === 'humidity') value = sensorData.climate.humidity ?? 0;
+          else if (m.id === 'vpd') value = sensorData.climate.vpd ?? 0;
+        }
+        if (m.category === 'soil' && sensorData.soil) {
+          if (m.id === 'moisture') value = sensorData.soil.moisture ?? 0;
+        }
+        if (m.category === 'light' && sensorData.light) {
+          if (m.id === 'ppfd') value = sensorData.light.ppfd ?? 0;
+          else if (m.id === 'quality_index') value = sensorData.light.quality_index ?? 0;
+          else if (m.id === 'red_blue_ratio') value = sensorData.light.red_blue_ratio ?? 0;
+        }
       }
       const status = (value < m.min || value > m.max) ? 'warning' : 'good';
       categories[m.category].push({ ...m, value, status });

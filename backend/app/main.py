@@ -12,6 +12,7 @@ app.add_middleware(
 )
 connected_clients = set()
 
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
@@ -35,3 +36,7 @@ async def receive_sensor_data(sensor_payload: dict):
             connected_clients.remove(client)
 
     return {"status": "received"}
+
+
+
+
